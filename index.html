@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>網站測速監控</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 12px;
+            text-align: left;
+        }
+        th {
+            background-color: #f2f2f2;
+        }
+        .status-good {
+            color: green;
+            font-weight: bold;
+        }
+        .status-bad {
+            color: red;
+            font-weight: bold;
+        }
+        #currentSite {
+            margin-top: 20px;
+            padding: 10px;
+            background-color: #e7f3ff;
+            border-radius: 4px;
+        }
+        .latency-cell {
+            text-align: center;
+        }
+        .active-site {
+            background-color: #f0f8ff;
+        }
+        #redirectNotice {
+            display: none;
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 20px;
+            border-radius: 8px;
+            text-align: center;
+            z-index: 1000;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>網站測速監控</h1>
+
+        <table id="siteTable">
+            <thead>
+                <tr>
+                    <th>網站名稱</th>
+                    <th>延遲時間 (ms)</th>
+                    <th>狀態</th>
+                </tr>
+            </thead>
+            <tbody id="siteTableBody">
+            </tbody>
+        </table>
+
+        <div id="currentSite">
+            <strong>目前使用的網站：</strong> <span id="activeSite">測試中...</span>
+        </div>
+    </div>
+
+    <div id="redirectNotice">
+        正在切換到較快的網站...
+    </div>
+
+    <script>
+        // 預設網站列表 - 請修改為您的網站
+        const defaultSites = [
+            { name: "網站 A", url: "https://example1.com" },
+            { name: "網站 B", url: "https://example2.com" },
+            { name: "網站 C", url: "https://example3.com" }
+        ];
+
+        let sites = [];
+        let activeSite = null;
+        const pingThreshold = 500; // 設定延遲時間閾值（毫秒）
+        const updateInterval = 3000; // 設定更新間隔（毫秒）
+        let isFirstLoad = true;
+
+        // 獲取當前路徑和查詢字串
+        function getCurrentPathAndQuery() {
+            const path = window.location.pathname; // 獲取路徑
+            const search = window.location.search; // 獲取查詢字串
+            const hash = window.location.hash; // 獲取錨點
+            return path + search + hash; // 組合完整的路徑和參數
+        }
+
+        function initialize() {
+            sites = defaultSites.map(site => ({
+                ...site,
+                latency: null,
+                status: 'pending'
+            }));
+            
+            sites.forEach(site => {
+                startMonitoring(site.url);
+            });
+        }
+
+        function updateTable() {
+            const tbody = document.getElementById('siteTableBody');
+            tbody.innerHTML = '';
+            
+            sites.forEach(site => {
+                const row = document.createElement('tr');
+                const isActive = activeSite && activeSite.url === site.url;
+                if (isActive) {
+                    row.classList.add('active-site');
+                }
+                
+                row.innerHTML = `
+                    <td>${site.name}${isActive ? ' (使用中)' : ''}</td>
+                    <td class="latency-cell">${site.latency !== null ? site.latency : '測試中...'}</td>
+                    <td class="${site.latency < pingThreshold ? 'status-good' : 'status-bad'}">
+                        ${site.latency < pingThreshold ? '連線良好' : '連線較慢'}
+                    </td>
+                `;
+                tbody.appendChild(row);
+            });
+        }
+
+        async function measureLatency(url) {
+            const start = performance.now();
+            try {
+                const response = await fetch(url, {
+                    mode: 'no-cors',
+                    cache: 'no-cache'
+                });
+                const end = performance.now();
+                return Math.round(end - start);
+            } catch (error) {
+                return Infinity;
+            }
+        }
+
+        async function startMonitoring(url) {
+            while (sites.find(s => s.url === url)) {
+                const site = sites.find(s => s.url === url);
+                const latency = await measureLatency(url);
+                site.latency = latency;
+                
+                checkAndSwitchSite(site, latency);
+                
+                updateTable();
+                await new Promise(resolve => setTimeout(resolve, updateInterval));
+            }
+        }
+
+        function checkAndSwitchSite(currentSite, currentLatency) {
+            if (isFirstLoad && allSitesTested()) {
+                isFirstLoad = false;
+                const bestSite = sites.reduce((prev, curr) => 
+                    (prev.latency < curr.latency) ? prev : curr
+                );
+                switchToSite(bestSite);
+                return;
+            }
+
+            if (activeSite && currentLatency > pingThreshold) {
+                const betterSite = sites.find(s => 
+                    s.latency < pingThreshold && s.url !== activeSite.url
+                );
+                if (betterSite) {
+                    switchToSite(betterSite);
+                }
+            }
+        }
+
+        function allSitesTested() {
+            return sites.every(site => site.latency !== null);
+        }
+
+        function showRedirectNotice() {
+            const notice = document.getElementById('redirectNotice');
+            notice.style.display = 'block';
+        }
+
+        function switchToSite(site) {
+            if (activeSite && activeSite.url === site.url) {
+                return;
+            }
+
+            activeSite = site;
+            document.getElementById('activeSite').textContent = site.name;
+            
+            showRedirectNotice();
+
+            setTimeout(() => {
+                // 獲取當前路徑和參數
+                const pathAndQuery = getCurrentPathAndQuery();
+                
+                // 構建新的URL，保留原有的路徑和參數
+                const newUrl = new URL(site.url);
+                
+                // 移除尾部斜線（如果有的话）
+                const baseUrl = newUrl.origin + newUrl.pathname.replace(/\/$/, '');
+                
+                // 如果pathAndQuery是根路徑'/'，就不添加額外的路徑
+                const finalUrl = pathAndQuery === '/' ? 
+                    baseUrl : 
+                    baseUrl + pathAndQuery;
+
+                // 儲存狀態到 localStorage
+                localStorage.setItem('lastActiveSite', JSON.stringify({
+                    url: site.url,
+                    name: site.name,
+                    timestamp: Date.now(),
+                    path: pathAndQuery
+                }));
+
+                // 重新導向到新網站
+                window.location.href = finalUrl;
+            }, 1000);
+        }
+
+        // 檢查之前的狀態
+        function checkPreviousState() {
+            const lastActive = localStorage.getItem('lastActiveSite');
+            if (lastActive) {
+                const { url, name, timestamp, path } = JSON.parse(lastActive);
+                if (Date.now() - timestamp < 300000) {
+                    activeSite = { url, name };
+                }
+            }
+        }
+
+        // 頁面載入時初始化
+        window.onload = () => {
+            checkPreviousState();
+            initialize();
+        };
+    </script>
+</body>
+</html>
